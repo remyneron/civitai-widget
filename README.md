@@ -2,9 +2,9 @@
 
 Элегантный полупрозрачный десктопный виджет для Linux (X11 / Wayland), транслирующий самые популярные и трендовые генерации с платформы [Civitai](https://civitai.com) прямо на ваш рабочий стол.
 
-| Виджет на рабочем столе | Карточка при наведении |
+| Zen Mode (без интерфейса) | Базовое отображение (с управлением) |
 | :---: | :---: |
-| <img src="docs/screenshots/civitai_widget.png" width="300" alt="Civitai Desktop Widget"> | <img src="docs/screenshots/civitai_widget_hover.png" width="300" alt="Card Hover Overlay"> |
+| <img src="docs/screenshots/zen_mode.png" width="300" alt="Zen Mode"> | <img src="docs/screenshots/base_view.png" width="300" alt="Базовое отображение"> |
 
 ---
 

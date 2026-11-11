@@ -24,3 +24,10 @@ cache/
 # OS
 .DS_Store
 Thumbs.db
+
+# Build and tooling
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/

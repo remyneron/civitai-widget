@@ -4,14 +4,10 @@
 
 Полупрозрачный десктопный виджет для Linux, который показывает самые популярные работы с [Civitai](https://civitai.com) прямо на рабочем столе.
 
-<table>
-  <tr>
-    <td width="25%" align="center"><img src="docs/screenshots/base_view.png" width="170" alt="Базовый вид"><br><sub>Базовый вид</sub></td>
-    <td width="25%" align="center"><img src="docs/screenshots/hover.png" width="170" alt="Подпись при наведении"><br><sub>Подпись при наведении</sub></td>
-    <td width="25%" align="center"><img src="docs/screenshots/video_poster.png" width="170" alt="Видео-постер"><br><sub>Видео-постер</sub></td>
-    <td width="25%" align="center"><img src="docs/screenshots/zen_mode.png" width="170" alt="Zen Mode"><br><sub>Zen Mode</sub></td>
-  </tr>
-</table>
+<p align="center">
+  <img src="docs/screenshots/overview.png" width="820" alt="Базовый вид, подпись при наведении, постер видео и Zen Mode">
+</p>
+<p align="center"><sub>Слева направо: базовый вид · подпись при наведении · видео с отключённым автовоспроизведением · Zen Mode</sub></p>
 
 ---: | :---: | :---: | :---: |
 | <img src="docs/screenshots/base_view.png" width="200" alt="Базовый вид"> | <img src="docs/screenshots/hover.png" width="200" alt="Подпись при наведении"> | <img src="docs/screenshots/video_poster.png" width="200" alt="Постер видео со значком"> | <img src="docs/screenshots/zen_mode.png" width="200" alt="Zen Mode"> |

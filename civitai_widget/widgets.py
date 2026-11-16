@@ -15,6 +15,7 @@ class PageDots(QWidget):
     clicked = Signal(int)
 
     CELL = 16
+    MAX_DOTS = 15
     HEIGHT = 18
 
     def __init__(self, parent=None):
@@ -27,7 +28,7 @@ class PageDots(QWidget):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def sizeHint(self) -> QSize:
-        return QSize(self.CELL * max(1, self._count), self.HEIGHT)
+        return QSize(self.CELL * max(1, min(self._count, self.MAX_DOTS)), self.HEIGHT)
 
     def minimumSizeHint(self) -> QSize:
         return QSize(40, self.HEIGHT)
@@ -43,14 +44,21 @@ class PageDots(QWidget):
         self._current = index
         self.update()
 
+    def _window(self) -> tuple[int, int]:
+        """First shown page and number of dots: long feeds get a sliding window of dots."""
+        shown = min(self._count, self.MAX_DOTS)
+        start = min(max(0, self._current - shown // 2), self._count - shown)
+        return start, shown
+
     def _cell(self) -> float:
-        return min(float(self.CELL), self.width() / max(1, self._count))
+        return min(float(self.CELL), self.width() / max(1, self._window()[1]))
 
     def _index_at(self, x: float) -> int:
+        start_index, shown = self._window()
         cell = self._cell()
-        start = (self.width() - cell * self._count) / 2
-        index = int((x - start) // cell)
-        return index if 0 <= index < self._count else -1
+        left = (self.width() - cell * shown) / 2
+        slot = int((x - left) // cell)
+        return start_index + slot if 0 <= slot < shown else -1
 
     def mouseMoveEvent(self, event):
         hovered = self._index_at(event.position().x())
@@ -77,18 +85,26 @@ class PageDots(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(Qt.PenStyle.NoPen)
+        first, shown = self._window()
         cell = self._cell()
-        start = (self.width() - cell * self._count) / 2
+        left = (self.width() - cell * shown) / 2
         middle = self.height() / 2
-        dot = min(6.0, cell * 0.55)
-        for i in range(self._count):
-            center = start + cell * i + cell / 2
-            if i == self._current:
+        base = min(6.0, cell * 0.55)
+        for slot in range(shown):
+            index = first + slot
+            center = left + cell * slot + cell / 2
+            dot = base
+            # Shrinking edge dots hint that there are more pages in that direction.
+            if (slot == 0 and first > 0) or (slot == shown - 1 and index < self._count - 1):
+                dot = base * 0.45
+            elif (slot == 1 and first > 0) or (slot == shown - 2 and index < self._count - 2):
+                dot = base * 0.7
+            if index == self._current:
                 width = min(cell * 0.9, dot * 2.2)
                 painter.setBrush(QColor(styles.ACCENT))
                 painter.drawRoundedRect(QRectF(center - width / 2, middle - dot / 2, width, dot), dot / 2, dot / 2)
             else:
-                painter.setBrush(QColor(255, 255, 255, 120 if i == self._hovered else 46))
+                painter.setBrush(QColor(255, 255, 255, 120 if index == self._hovered else 46))
                 painter.drawEllipse(QRectF(center - dot / 2, middle - dot / 2, dot, dot))
         painter.end()
 

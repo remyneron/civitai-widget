@@ -14,6 +14,7 @@ from civitai_widget import config
 log = logging.getLogger(__name__)
 
 _IMAGE_SUFFIX = f"_{config.THUMB_WIDTH}.jpg"
+_VIDEO_SUFFIX = f"_{config.THUMB_WIDTH}.mp4"
 _UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
 _STALE_TEMP_S = 3600
 
@@ -23,30 +24,38 @@ class DiskCache:
         self.root = Path(root) if root else config.cache_dir()
         self.root.mkdir(parents=True, exist_ok=True)
 
-    # ---- thumbnails -------------------------------------------------------
-    def image_path(self, image_id: str) -> Path:
-        safe = _UNSAFE.sub("", str(image_id)) or "unknown"
-        return self.root / f"{safe}{_IMAGE_SUFFIX}"
+    # ---- media files (thumbnails and videos) -------------------------------
+    def media_path(self, media_id: str, kind: str = "image") -> Path:
+        safe = _UNSAFE.sub("", str(media_id)) or "unknown"
+        return self.root / f"{safe}{_VIDEO_SUFFIX if kind == 'video' else _IMAGE_SUFFIX}"
 
-    def has_image(self, image_id: str) -> bool:
-        path = self.image_path(image_id)
+    def has_media(self, media_id: str, kind: str = "image") -> bool:
         try:
-            return path.stat().st_size > 0
+            return self.media_path(media_id, kind).stat().st_size > 0
         except OSError:
             return False
 
-    def touch(self, image_id: str) -> None:
-        """Mark a thumbnail as recently used so cleanup keeps what is still on screen."""
+    def touch(self, media_id: str, kind: str = "image") -> None:
+        """Mark a file as recently used so cleanup keeps what is still on screen."""
         try:
-            os.utime(self.image_path(image_id))
+            os.utime(self.media_path(media_id, kind))
         except OSError:
             pass
 
-    def drop_image(self, image_id: str) -> None:
+    def drop_media(self, media_id: str, kind: str = "image") -> None:
         try:
-            self.image_path(image_id).unlink()
+            self.media_path(media_id, kind).unlink()
         except OSError:
             pass
+
+    def image_path(self, image_id: str) -> Path:
+        return self.media_path(image_id, "image")
+
+    def has_image(self, image_id: str) -> bool:
+        return self.has_media(image_id, "image")
+
+    def drop_image(self, image_id: str) -> None:
+        self.drop_media(image_id, "image")
 
     # ---- feed metadata ----------------------------------------------------
     def feed_path(self, key: str) -> Path:
@@ -83,7 +92,7 @@ class DiskCache:
         max_bytes: int = config.CACHE_MAX_BYTES,
         now: float | None = None,
     ) -> int:
-        """Delete old files, leftovers and, if needed, least recently used thumbnails."""
+        """Delete old files, leftovers and, if needed, least recently used media files."""
         now = time.time() if now is None else now
         removed = 0
         images: list[tuple[float, int, Path]] = []
@@ -101,7 +110,7 @@ class DiskCache:
             path = Path(entry.path)
             age = now - stat.st_mtime
             name = entry.name
-            if name.endswith(_IMAGE_SUFFIX):
+            if name.endswith((_IMAGE_SUFFIX, _VIDEO_SUFFIX)):
                 if age > max_age_s:
                     removed += _unlink(path)
                 else:

@@ -20,9 +20,16 @@ AUTOSTART_FILE="$AUTOSTART_DIR/$APP_ID.desktop"
 
 refresh_caches() {
     command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APP_DIR" >/dev/null 2>&1 || true
-    command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t "$(dirname "$(dirname "$ICON_DIR")")" >/dev/null 2>&1 || true
+    # Desktop shells only rescan an icon theme when the theme directory itself changes.
+    local theme_dir
+    theme_dir="$(dirname "$(dirname "$ICON_DIR")")"
+    touch --no-create "$theme_dir" 2>/dev/null || true
+    command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -f -t "$theme_dir" >/dev/null 2>&1 || true
+    touch --no-create "$DESKTOP_FILE" 2>/dev/null || true
 }
 
+# The icon is referenced by absolute path: a running GNOME Shell does not reliably pick up
+# icons added to the user icon theme until the next login.
 write_desktop_entry() {
     cat > "$1" << EOF
 [Desktop Entry]
@@ -30,7 +37,7 @@ Type=Application
 Name=Civitai Widget
 Comment=Trending AI art from Civitai on your desktop
 Exec=$LAUNCHER
-Icon=$APP_ID
+Icon=$ICON_FILE
 Terminal=false
 Categories=Utility;Graphics;
 StartupNotify=false

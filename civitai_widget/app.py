@@ -19,6 +19,11 @@ def _setup_platform() -> None:
             os.environ["QT_QPA_PLATFORM"] = "xcb"
 
 
+def _quiet_multimedia() -> None:
+    # The FFmpeg backend dumps stream details for every video it opens; keep warnings only.
+    os.environ.setdefault("QT_LOGGING_RULES", "qt.multimedia.*.debug=false;qt.multimedia.*.info=false")
+
+
 def _setup_logging(debug: bool) -> None:
     handlers: list[logging.Handler] = [logging.StreamHandler()]
     try:
@@ -41,6 +46,8 @@ def main(argv: list[str] | None = None) -> int:
     args, qt_args = parser.parse_known_args(sys.argv[1:] if argv is None else argv)
 
     _setup_platform()
+    if not args.debug:
+        _quiet_multimedia()
     _setup_logging(args.debug)
 
     from PySide6.QtGui import QFont

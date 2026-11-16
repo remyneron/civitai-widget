@@ -28,7 +28,7 @@ def test_format_count():
     assert feed.format_count(2_400_000) == "2.4M"
 
 
-def test_clean_items_drops_videos_duplicates_and_broken_entries():
+def test_clean_items_keeps_videos_drops_duplicates_and_broken_entries():
     raw = [
         make_item(1),
         make_item(2, type="video"),
@@ -37,8 +37,37 @@ def test_clean_items_drops_videos_duplicates_and_broken_entries():
         "garbage",
         {"type": "image", "url": "x"},
         make_item(4),
+        make_item(5, type="audio"),
     ]
-    assert feed.item_ids(feed.clean_items(raw, allow_nsfw=False)) == ["1", "4"]
+    assert feed.item_ids(feed.clean_items(raw, allow_nsfw=False)) == ["1", "2", "4"]
+
+
+def test_video_urls():
+    base = "https://image.civitai.com/key/uuid"
+    video = {"type": "video", "url": f"{base}/original=true/clip.mp4"}
+    image = {"type": "image", "url": f"{base}/original=true/pic.jpeg"}
+    assert feed.is_video(video) and not feed.is_video(image) and not feed.is_video(None)
+    assert feed.poster_url(video, 450) == f"{base}/anim=false,transcode=true,width=450/clip.jpeg"
+    assert feed.video_url(video, 450) == f"{base}/transcode=true,width=450/clip.mp4"
+    assert feed.poster_url(image, 450) == f"{base}/width=450/pic.jpeg"
+
+
+def test_page_slice_never_leaves_gaps():
+    items = [make_item(i) for i in range(14)]
+    assert feed.page_count(14, 6) == 3
+    assert feed.item_ids(feed.page_slice(items, 0, 6)) == ["0", "1", "2", "3", "4", "5"]
+    # the short last page is topped up from the beginning
+    assert feed.item_ids(feed.page_slice(items, 2, 6)) == ["12", "13", "0", "1", "2", "3"]
+    # fewer items than tiles: nothing to top up with without repeating on the same page
+    assert len(feed.page_slice(items[:4], 0, 6)) == 4
+    assert feed.page_slice(items, 5, 6) == []
+    assert feed.page_count(0, 6) == 0
+
+
+def test_merge_new_skips_known_items():
+    existing = [make_item(1), make_item(2)]
+    incoming = [make_item(2), make_item(3)]
+    assert feed.item_ids(feed.merge_new(existing, incoming)) == ["3"]
 
 
 def test_clean_items_enforces_sfw_on_the_client():

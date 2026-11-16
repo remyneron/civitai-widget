@@ -34,6 +34,7 @@ _STRINGS: dict[str, tuple[str, str]] = {
     "load_more": ("Load more", "Загрузить ещё"),
     "added": ("Added: {n}", "Добавлено работ: {n}"),
     "autoplay_video": ("Autoplay videos", "Автовоспроизведение видео"),
+    "auto_load_more": ("Load more automatically", "Подгружать новые работы автоматически"),
     "refresh": ("Refresh", "Обновить"),
     "always_on_top": ("Always on top", "Поверх всех окон"),
     "zen": ("Zen mode", "Режим Zen"),

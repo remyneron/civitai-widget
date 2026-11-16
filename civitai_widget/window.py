@@ -294,7 +294,9 @@ class CivitaiWindow(QWidget):
             self._set_footer_status(tr("no_more"), timeout_ms=6000)
 
     def _maybe_load_more(self) -> None:
-        """Fetch the next batch shortly before the slideshow runs out of pages."""
+        """Fetch the next batch shortly before the slideshow runs out of pages (opt-in)."""
+        if not self.settings.get("auto_load_more"):
+            return
         if self._loading or not self._next_cursor or len(self._all_items) >= config.MAX_ITEMS:
             return
         if self._more_failed_at.isValid() and self._more_failed_at.elapsed() < 60_000:
@@ -581,6 +583,11 @@ class CivitaiWindow(QWidget):
         self.settings.set("nsfw", enabled)
         self._reload_for_new_query()
 
+    def set_auto_load_more(self, enabled: bool) -> None:
+        self.settings.set("auto_load_more", enabled)
+        if enabled:
+            self._maybe_load_more()
+
     def set_autoplay_video(self, enabled: bool) -> None:
         self.settings.set("autoplay_video", enabled)
         self.client.autoplay_video = enabled
@@ -670,6 +677,7 @@ class CivitaiWindow(QWidget):
         self._add_toggle(menu, tr("zen") + "\tEsc", self._zen, self.set_zen)
         self._add_toggle(menu, tr("autostart"), autostart.is_enabled(), self._set_autostart)
         self._add_toggle(menu, tr("autoplay_video"), self.settings.get("autoplay_video"), self.set_autoplay_video)
+        self._add_toggle(menu, tr("auto_load_more"), self.settings.get("auto_load_more"), self.set_auto_load_more)
         self._add_toggle(menu, tr("nsfw"), query.nsfw, self.set_nsfw)
         menu.addSeparator()
         menu.addAction(tr("quit") + "\tCtrl+Q", self.quit)

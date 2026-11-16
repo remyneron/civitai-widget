@@ -68,6 +68,7 @@ class Settings:
         "always_on_top": False,
         "zen": False,
         "autoplay_video": True,
+        "auto_load_more": False,
         "geometry": None,
     }
 

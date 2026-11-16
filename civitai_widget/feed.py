@@ -33,18 +33,41 @@ class FeedQuery:
         return hashlib.sha1(raw.encode()).hexdigest()[:12]
 
 
+def _with_transform(url: str, transform: str, extension: str | None = None) -> str:
+    """Replace the CDN transform segment (the one right before the file name)."""
+    parts = urlsplit(url)
+    segments = parts.path.split("/")
+    if len(segments) < 2 or "=" not in segments[-2]:
+        return url
+    segments[-2] = transform
+    if extension:
+        segments[-1] = segments[-1].rsplit(".", 1)[0] + extension
+    return urlunsplit(parts._replace(path="/".join(segments)))
+
+
 def thumbnail_url(url: str, width: int = config.THUMB_WIDTH) -> str:
     """Rewrite a Civitai image URL so the CDN returns a `width`-px thumbnail.
 
-    URLs look like `.../<uuid>/original=true/<name>.jpeg` or `.../<uuid>/width=1024/<name>.jpeg`;
-    the transform segment is always the one right before the file name.
+    URLs look like `.../<uuid>/original=true/<name>.jpeg` or `.../<uuid>/width=1024/<name>.jpeg`.
     """
-    parts = urlsplit(url)
-    segments = parts.path.split("/")
-    if len(segments) >= 2 and "=" in segments[-2]:
-        segments[-2] = f"width={width}"
-        return urlunsplit(parts._replace(path="/".join(segments)))
-    return url
+    return _with_transform(url, f"width={width}")
+
+
+def is_video(item: dict | None) -> bool:
+    return bool(item) and item.get("type") == "video"
+
+
+def poster_url(item: dict, width: int = config.THUMB_WIDTH) -> str:
+    """Still picture for a tile: a thumbnail for images, the first frame for videos."""
+    url = item.get("url") or ""
+    if is_video(item):
+        return _with_transform(url, f"anim=false,transcode=true,width={width}", ".jpeg")
+    return thumbnail_url(url, width)
+
+
+def video_url(item: dict, width: int = config.THUMB_WIDTH) -> str:
+    """Down-scaled MP4 for in-tile playback (a few MB instead of the original)."""
+    return _with_transform(item.get("url") or "", f"transcode=true,width={width}", ".mp4")
 
 
 def reaction_count(item: dict) -> int:
@@ -82,13 +105,13 @@ def is_sfw(item: dict) -> bool:
 
 
 def clean_items(raw_items, allow_nsfw: bool) -> list[dict]:
-    """Keep displayable still images, drop duplicates and (optionally) anything not SFW."""
+    """Keep displayable images and videos, drop duplicates and (optionally) anything not SFW."""
     seen: set[str] = set()
     result: list[dict] = []
     for item in raw_items or []:
         if not isinstance(item, dict):
             continue
-        if item.get("type") != "image" or not item.get("url") or item.get("id") is None:
+        if item.get("type") not in ("image", "video") or not item.get("url") or item.get("id") is None:
             continue
         if not allow_nsfw and not is_sfw(item):
             continue
@@ -115,6 +138,26 @@ def filter_by_model(items: list[dict], model: str | None) -> list[dict]:
 def paginate(items: list[dict], per_page: int) -> list[list[dict]]:
     per_page = max(1, per_page)
     return [items[i : i + per_page] for i in range(0, len(items), per_page)]
+
+
+def page_count(total: int, per_page: int) -> int:
+    return -(-total // max(1, per_page))
+
+
+def page_slice(items: list[dict], page: int, per_page: int) -> list[dict]:
+    """Items of one page. A short last page is topped up from the start, so no tile stays empty."""
+    per_page = max(1, per_page)
+    start = page * per_page
+    chunk = items[start : start + per_page]
+    if chunk and len(chunk) < per_page and len(items) >= per_page:
+        chunk = chunk + items[: per_page - len(chunk)]
+    return chunk
+
+
+def merge_new(existing: list[dict], incoming: list[dict]) -> list[dict]:
+    """Items from `incoming` that are not in `existing` yet (batches may overlap)."""
+    known = set(item_ids(existing))
+    return [item for item in incoming if str(item.get("id")) not in known]
 
 
 def item_ids(items: list[dict]) -> list[str]:

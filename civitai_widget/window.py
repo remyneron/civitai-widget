@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMenu,
-    QMessageBox,
     QPushButton,
     QSystemTrayIcon,
     QToolButton,
@@ -45,15 +44,20 @@ class CivitaiWindow(QWidget):
         self.settings = settings or Settings()
         self.cache = cache or DiskCache()
         self.client = CivitaiClient(self.cache, self)
+        self.client.autoplay_video = bool(self.settings.get("autoplay_video"))
         self.slideshow = Slideshow(self.settings.get("interval_s") * 1000, self)
 
         self._all_items: list[dict] = []
         self._items: list[dict] = []
-        self._pages: list[list[dict]] = []
         self._page = 0
-        self._batch = 1
         self._next_cursor = ""
-        self._pending_cursor = ""
+        self._loading = False
+        self._appending = False
+        self._silent = False
+        self._extended = False          # more than the first batch has been loaded
+        self._refresh_on_wrap = False
+        self._more_attempts = 0
+        self._more_failed_at = QElapsedTimer()
         self._model_filter: str | None = None
         self._zen = bool(self.settings.get("zen"))
         self._quitting = False
@@ -267,7 +271,10 @@ class CivitaiWindow(QWidget):
 
     # ---- data -------------------------------------------------------------
     def load(self, cursor: str = "", force: bool = False, silent: bool = False) -> None:
-        self._pending_cursor = cursor
+        """Load the first batch (replacing the feed) or, with a cursor, append the next one."""
+        self._loading = True
+        self._appending = bool(cursor)
+        self._silent = silent
         if self._all_items:
             if not silent:
                 self._set_footer_status(tr("updating"))
@@ -278,34 +285,50 @@ class CivitaiWindow(QWidget):
     def refresh(self) -> None:
         self.load(force=True)
 
-    def load_next_batch(self) -> None:
+    def load_more(self, silent: bool = False) -> None:
+        if self._loading:
+            return
         if self._next_cursor:
-            self.load(cursor=self._next_cursor, force=True)
-        else:
+            self.load(cursor=self._next_cursor, force=True, silent=silent)
+        elif not silent:
             self._set_footer_status(tr("no_more"), timeout_ms=6000)
 
+    def _maybe_load_more(self) -> None:
+        """Fetch the next batch shortly before the slideshow runs out of pages."""
+        if self._loading or not self._next_cursor or len(self._all_items) >= config.MAX_ITEMS:
+            return
+        if self._more_failed_at.isValid() and self._more_failed_at.elapsed() < 60_000:
+            return
+        if self._page >= self._page_count() - 2:
+            self.load_more(silent=True)
+
     def _auto_refresh(self) -> None:
-        # Only the first batch is "live"; do not yank the user out of a deeper one.
-        if self._batch == 1:
+        # The first batch is "live". Once more has been loaded, refresh when the show wraps around
+        # instead of yanking the viewer back to the start in the middle of the feed.
+        if self._extended:
+            self._refresh_on_wrap = True
+        elif not self._loading:
             self.load(force=True, silent=True)
 
     def _on_feed_loaded(self, items: list, next_cursor: str, stale: bool) -> None:
-        was_next_batch = bool(self._pending_cursor)
-        self._pending_cursor = ""
+        appending, silent = self._appending, self._silent
+        self._loading = self._appending = False
+        self._more_failed_at.invalidate()
+        if appending:
+            self._append_items(items, next_cursor, silent)
+            return
         if not items:
-            if self._all_items and was_next_batch:
-                self._set_footer_status(tr("no_more"), timeout_ms=6000)
-            else:
-                self._all_items, self._items, self._pages = [], [], []
-                self.dots.set_count(0)
-                self._show_status(tr("empty"), retry=True)
+            self._all_items, self._items = [], []
+            self._show_status(tr("empty"), retry=True)
             return
 
         unchanged = feed.item_ids(items) == feed.item_ids(self._all_items)
         had_items = bool(self._all_items)
         self._all_items = items
         self._next_cursor = next_cursor
-        self._batch = self._batch + 1 if was_next_batch else 1
+        self._extended = False
+        self._refresh_on_wrap = False
+        self._more_attempts = 0
         if not unchanged:
             self.client.clear_queue()
         self._apply_filter(reset_page=not unchanged, mode="fast" if had_items else "instant")
@@ -314,9 +337,38 @@ class CivitaiWindow(QWidget):
         self.slideshow.hold("empty", False)
         self._set_footer_status(tr("offline_cache") if stale else "")
 
+    def _append_items(self, items: list, next_cursor: str, silent: bool) -> None:
+        fresh = feed.merge_new(self._all_items, items)
+        self._next_cursor = next_cursor if items else ""
+        before = len(self._items)
+        if fresh:
+            self._all_items = self._all_items + fresh
+            self._extended = True
+            self._items = feed.filter_by_model(self._all_items, self._model_filter)
+        grew = len(self._items) > before
+        if grew:
+            self._more_attempts = 0
+            was_short = (self._page + 1) * self._per_page() > before
+            self.dots.set_count(self._page_count())
+            self.dots.set_current(self._page)
+            if was_short:  # the page on screen was topped up from the start: show the real items
+                self._show_page(self._page, "fast")
+        if not silent:
+            if grew:
+                self._set_footer_status(tr("added", n=len(self._items) - before), timeout_ms=5000)
+            else:
+                self._set_footer_status(tr("no_more"), timeout_ms=6000)
+        elif not grew and self._next_cursor and self._more_attempts < 3:
+            # Nothing usable in this batch (e.g. a base-model filter): look a little further.
+            self._more_attempts += 1
+            QTimer.singleShot(0, self._maybe_load_more)
+
     def _on_feed_failed(self, message: str) -> None:
-        self._pending_cursor = ""
-        if self._all_items:
+        appending, silent = self._appending, self._silent
+        self._loading = self._appending = False
+        if appending and silent:
+            self._more_failed_at.start()  # back off for a minute before trying again
+        elif self._all_items:
             self._set_footer_status(message, timeout_ms=12000)
         else:
             self._show_status(message, retry=True)
@@ -325,45 +377,52 @@ class CivitaiWindow(QWidget):
         if self._model_filter and not feed.filter_by_model(self._all_items, self._model_filter):
             self._model_filter = None
         self._items = feed.filter_by_model(self._all_items, self._model_filter)
-        first_index = 0 if reset_page else self._page * max(1, len(self._cards))
+        first_index = 0 if reset_page else self._page * self._per_page()
         self._ensure_cards()
         self._rebuild_pages(first_index, mode)
         if reset_page:
             self.slideshow.restart()
 
     def _rebuild_pages(self, first_index: int, mode: str) -> None:
-        per_page = max(1, len(self._cards))
-        self._pages = feed.paginate(self._items, per_page)
-        self.dots.set_count(len(self._pages))
-        page = min(first_index // per_page, max(0, len(self._pages) - 1))
+        self.dots.set_count(self._page_count())
+        page = min(first_index // self._per_page(), max(0, self._page_count() - 1))
         self._show_page(page, mode)
 
     # ---- pages ------------------------------------------------------------
+    def _per_page(self) -> int:
+        return max(1, len(self._cards))
+
+    def _page_count(self) -> int:
+        return feed.page_count(len(self._items), self._per_page())
+
     def _show_page(self, index: int, mode: str) -> None:
-        if not self._pages:
+        count = self._page_count()
+        if not count:
             for card in self._cards:
                 card.set_item(None, fade_ms=0)
             return
-        index %= len(self._pages)
+        index %= count
         self._page = index
-        page = self._pages[index]
+        page = feed.page_slice(self._items, index, self._per_page())
         order = list(range(len(self._cards)))
         if mode == "cascade":
+            # Tiles change one after another, each with a slow cross-fade.
             random.shuffle(order)
-            step, fade = min(450, 1500 // max(1, len(order) - 1)), 350
+            step, fade = 320, 1100
         elif mode == "fast":
-            step, fade = 0, 140
+            step, fade = 50, 380
         else:
             step, fade = 0, 0
         for rank, card_index in enumerate(order):
             item = page[card_index] if card_index < len(page) else None
             self._cards[card_index].set_item(item, delay_ms=rank * step, fade_ms=fade)
         self.dots.set_current(index)
-        if len(self._pages) > 1:
-            self.client.prefetch(self._pages[(index + 1) % len(self._pages)])
+        if count > 1:
+            self.client.prefetch(feed.page_slice(self._items, (index + 1) % count, self._per_page()))
+        self._maybe_load_more()
 
     def go_to_page(self, index: int, restart: bool = True) -> None:
-        if len(self._pages) < 2:
+        if self._page_count() < 2:
             return
         self._show_page(index, "fast")
         if restart:
@@ -376,8 +435,14 @@ class CivitaiWindow(QWidget):
         self.go_to_page(self._page - 1)
 
     def _on_advance(self) -> None:
-        if len(self._pages) > 1 and self.stack.currentWidget() is self.grid_page:
-            self._show_page(self._page + 1, "cascade")
+        count = self._page_count()
+        if count < 2 or self.stack.currentWidget() is not self.grid_page:
+            return
+        if self._page + 1 >= count and self._refresh_on_wrap and not self._loading:
+            self._refresh_on_wrap = False
+            self.load(force=True, silent=True)  # back to a fresh first batch
+            return
+        self._show_page(self._page + 1, "cascade")
 
     # ---- layout -----------------------------------------------------------
     def _rows_for_height(self) -> int:
@@ -412,7 +477,7 @@ class CivitaiWindow(QWidget):
     def _relayout(self) -> None:
         if not self._items:
             return
-        first_index = self._page * max(1, len(self._cards))
+        first_index = self._page * self._per_page()
         if self._ensure_cards():
             self._rebuild_pages(first_index, "instant")
 
@@ -454,8 +519,6 @@ class CivitaiWindow(QWidget):
             details.append(tr(f"sort_{query.sort}").lower())
         if self._model_filter:
             details.append(self._model_filter)
-        if self._batch > 1:
-            details.append(tr("batch", n=self._batch))
         if query.nsfw:
             details.append("NSFW")
         self.subtitle_label.setText(("· " + " · ".join(details)) if details else "")
@@ -515,26 +578,17 @@ class CivitaiWindow(QWidget):
         self._update_title()
 
     def set_nsfw(self, enabled: bool) -> None:
-        if enabled and not self._confirm_nsfw():
-            return
         self.settings.set("nsfw", enabled)
         self._reload_for_new_query()
 
-    def _confirm_nsfw(self) -> bool:
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle(tr("nsfw_confirm_title"))
-        box.setText(tr("nsfw_confirm_title"))
-        box.setInformativeText(tr("nsfw_confirm_text"))
-        accept = box.addButton(tr("enable"), QMessageBox.ButtonRole.AcceptRole)
-        cancel = box.addButton(tr("cancel"), QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(cancel)
-        box.exec()
-        return box.clickedButton() is accept
+    def set_autoplay_video(self, enabled: bool) -> None:
+        self.settings.set("autoplay_video", enabled)
+        self.client.autoplay_video = enabled
+        for card in self._cards:
+            card.refresh_video()
 
     def _reload_for_new_query(self) -> None:
         self._model_filter = None
-        self._batch = 1
         self._update_title()
         self.load()
 
@@ -579,7 +633,7 @@ class CivitaiWindow(QWidget):
         menu.setStyleSheet(styles.MENU_QSS)
         paused = self.slideshow.is_held("user")
         menu.addAction((tr("resume") if paused else tr("pause")) + "\tSpace", self.toggle_pause)
-        paging = len(self._pages) > 1
+        paging = self._page_count() > 1
         menu.addAction(tr("next_page") + "\t→", self.next_page).setEnabled(paging)
         menu.addAction(tr("prev_page") + "\t←", self.prev_page).setEnabled(paging)
         menu.addSeparator()
@@ -608,13 +662,14 @@ class CivitaiWindow(QWidget):
         )
         menu.addSeparator()
 
-        menu.addAction(tr("next_batch") + "\tN", self.load_next_batch).setEnabled(bool(self._next_cursor))
+        menu.addAction(tr("load_more") + "\tN", self.load_more).setEnabled(bool(self._next_cursor) and not self._loading)
         menu.addAction(tr("refresh") + "\tR", self.refresh)
         menu.addSeparator()
 
         self._add_toggle(menu, tr("always_on_top") + "\tP", self.settings.get("always_on_top"), lambda _: self.toggle_always_on_top())
         self._add_toggle(menu, tr("zen") + "\tEsc", self._zen, self.set_zen)
         self._add_toggle(menu, tr("autostart"), autostart.is_enabled(), self._set_autostart)
+        self._add_toggle(menu, tr("autoplay_video"), self.settings.get("autoplay_video"), self.set_autoplay_video)
         self._add_toggle(menu, tr("nsfw"), query.nsfw, self.set_nsfw)
         menu.addSeparator()
         menu.addAction(tr("quit") + "\tCtrl+Q", self.quit)
@@ -769,7 +824,7 @@ class CivitaiWindow(QWidget):
         elif key in (Qt.Key.Key_R, Qt.Key.Key_F5):
             self.refresh()
         elif key == Qt.Key.Key_N:
-            self.load_next_batch()
+            self.load_more()
         elif key == Qt.Key.Key_P:
             self.toggle_always_on_top()
         elif key == Qt.Key.Key_Q and ctrl:
@@ -793,6 +848,8 @@ class CivitaiWindow(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self.slideshow.hold("hidden", False)
+        for card in self._cards:
+            card.set_playing(True)
         self.slideshow.set_progress_visible(not self._zen)
         if self.tray:
             self._tray_toggle.setText(tr("hide_widget"))
@@ -800,6 +857,8 @@ class CivitaiWindow(QWidget):
     def hideEvent(self, event):
         super().hideEvent(event)
         self.slideshow.hold("hidden", True)
+        for card in self._cards:
+            card.set_playing(False)
         self.slideshow.set_progress_visible(False)
         if self.tray:
             self._tray_toggle.setText(tr("show_widget"))

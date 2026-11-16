@@ -19,6 +19,7 @@ REQUEST_TIMEOUT_MS = 15000
 THUMB_WIDTH = 450
 MAX_PARALLEL_DOWNLOADS = 4
 MAX_DOWNLOAD_RETRIES = 2
+MAX_ITEMS = 600                 # stop auto-loading more once this many items are in memory
 
 CACHE_MAX_AGE_S = 7 * 86400
 CACHE_MAX_BYTES = 300 * 1024 * 1024
@@ -66,6 +67,7 @@ class Settings:
         "nsfw": False,
         "always_on_top": False,
         "zen": False,
+        "autoplay_video": True,
         "geometry": None,
     }
 

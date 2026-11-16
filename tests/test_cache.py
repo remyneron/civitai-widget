@@ -73,6 +73,17 @@ def test_cleanup_enforces_size_limit_oldest_first(tmp_path):
     assert cache.has_image("1") and cache.has_image("2")
 
 
+def test_videos_are_cached_and_cleaned_like_images(tmp_path):
+    cache = DiskCache(tmp_path)
+    assert cache.media_path("7", "video").name == "7_450.mp4"
+    _write(cache.media_path("7", "video"), size=100, age_s=300)
+    _write(cache.media_path("8", "image"), size=100, age_s=100)
+    assert cache.has_media("7", "video") and not cache.has_media("7", "image")
+    cache.cleanup(max_bytes=150)
+    assert not cache.has_media("7", "video")
+    assert cache.has_media("8", "image")
+
+
 def test_touch_protects_recently_used(tmp_path):
     cache = DiskCache(tmp_path)
     _write(cache.image_path("1"), age_s=8 * 86400)
